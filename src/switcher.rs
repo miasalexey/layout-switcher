@@ -7,7 +7,6 @@ use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::Duration;
 
-// Импортируем типы из uinput правильно
 use uinput::event::keyboard::{Key, KeyPad, Keyboard as UiKey, Misc};
 
 fn default_retry_delay() -> u64 {
@@ -75,11 +74,21 @@ impl Switcher {
         let start_idx = if self.all_selected {
             0
         } else {
-            self.buffer
+            let last_non_space = self
+                .buffer
                 .iter()
-                .rposition(|(k, _)| *k == KeyCode::KEY_SPACE)
-                .map(|pos| pos + 1)
-                .unwrap_or(0)
+                .rposition(|(k, _)| *k != KeyCode::KEY_SPACE);
+
+            match last_non_space {
+                Some(end_of_word_idx) => { 
+                    self.buffer[..end_of_word_idx]
+                        .iter()
+                        .rposition(|(k, _)| *k == KeyCode::KEY_SPACE)
+                        .map(|pos| pos + 1) // Начало слова сразу после пробела
+                        .unwrap_or(0)
+                }
+                None => 0, 
+            }
         };
 
         let target_slice = &self.buffer[start_idx..];
@@ -133,7 +142,7 @@ impl Switcher {
 }
 
 pub fn load_config() -> Config {
-    let path = "/home/miasa/develop/layout-switcher/config.toml";
+    let path = "config.toml";
     let content = fs::read_to_string(path).expect("config.toml not found!");
     toml::from_str(&content).expect("config.toml parse error")
 }
@@ -181,7 +190,7 @@ pub fn find_keyboard(config: &Config) -> Result<PathBuf, Box<dyn Error>> {
 pub fn run_main_loop(device_path: &Path, state: &mut Switcher) -> Result<(), Box<dyn Error>> {
     let mut device = Device::open(device_path)?;
     device.grab()?;
-    
+
     let mut v_dev = uinput::default()?
         .name("Rust Switcher Virtual Device")?
         .event(uinput::event::Keyboard::All)?
@@ -189,13 +198,10 @@ pub fn run_main_loop(device_path: &Path, state: &mut Switcher) -> Result<(), Box
 
     loop {
         for event in device.fetch_events()? {
-            // 1. Проверяем тип события: нажатие клавиши
             if event.event_type() == EventType::KEY {
-                // 2. В 0.13 получаем KeyCode напрямую из кода события
                 let key_code = KeyCode(event.code());
                 let value = event.value();
 
-                // Обновление состояния модификаторов
                 match key_code {
                     KeyCode::KEY_LEFTSHIFT | KeyCode::KEY_RIGHTSHIFT => {
                         state.shift_pressed = value != 0;
@@ -206,7 +212,8 @@ pub fn run_main_loop(device_path: &Path, state: &mut Switcher) -> Result<(), Box
                     _ => {}
                 }
 
-                if value == 1 { // Нажатие
+                if value == 1 {
+                    // Нажатие
                     if key_code == state.trigger_keycode {
                         let _ = state.fix_text(&mut v_dev);
                         continue;
@@ -228,11 +235,14 @@ pub fn run_main_loop(device_path: &Path, state: &mut Switcher) -> Result<(), Box
                     }
                 }
 
-                // Проброс в виртуальное устройство
                 if let Some(ui_key) = evdev_to_ui_key(key_code) {
                     match value {
-                        1 | 2 => { let _ = v_dev.press(&ui_key); }
-                        0 => { let _ = v_dev.release(&ui_key); }
+                        1 | 2 => {
+                            let _ = v_dev.press(&ui_key);
+                        }
+                        0 => {
+                            let _ = v_dev.release(&ui_key);
+                        }
                         _ => {}
                     }
                     let _ = v_dev.synchronize();
@@ -276,8 +286,7 @@ fn parse_ui_key(s: &str) -> Option<UiKey> {
     }
 }
 
-
-// маппер из evdev в uinput 
+// маппер из evdev в uinput
 pub fn evdev_to_ui_key(key: KeyCode) -> Option<UiKey> {
     match key {
         KeyCode::KEY_A => Some(UiKey::Key(Key::A)),
