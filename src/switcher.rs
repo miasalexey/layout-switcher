@@ -5,7 +5,7 @@ use std::error::Error;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use uinput::event::keyboard::{Key, KeyPad, Keyboard as UiKey, Misc};
 
@@ -33,6 +33,7 @@ pub struct Switcher {
     buffer: Vec<(KeyCode, bool)>,
     shift_pressed: bool,
     ctrl_pressed: bool,
+    last_event_time: Option<SystemTime>,
     all_selected: bool,
     trigger_keycode: KeyCode,
     switch_keys: Vec<UiKey>,
@@ -52,6 +53,7 @@ impl Switcher {
             buffer: Vec::new(),
             shift_pressed: false,
             ctrl_pressed: false,
+            last_event_time: None,
             all_selected: false,
             trigger_keycode,
             switch_keys,
@@ -198,6 +200,17 @@ pub fn run_main_loop(device_path: &Path, state: &mut Switcher) -> Result<(), Box
 
     loop {
         for event in device.fetch_events()? {
+            
+            let now = event.timestamp();
+            let duration = state.last_event_time
+                .and_then(|t| now.duration_since(t).ok()) // Получаем Option<Duration>
+                .unwrap_or_default();
+            
+            if duration.as_secs() > 3 {
+                state.buffer.clear();
+            }
+            state.last_event_time = Some(now);
+                    
             if event.event_type() == EventType::KEY {
                 let key_code = KeyCode(event.code());
                 let value = event.value();
